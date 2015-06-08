@@ -103,7 +103,6 @@ impl <T: Clone + Send + 'static> Requester<T> {
                 if no_more_subscribers && without_timeouts.is_empty() && with_timeouts.is_empty() && forward_s.is_none() {
                     return;
                 }
-
             }
         });
 
@@ -121,9 +120,10 @@ impl <T: Clone + Send + 'static> Requester<T> {
     }
 
     pub fn request_timeout<F>(&self, timeout_ms: u64, predicate: F) -> Receiver<Option<T>> where F: Fn(&T) -> bool + Send + 'static {
+        let now = precise_time_ms() + timeout_ms;
         let boxed = Box::new(predicate) as FilterFn<T>;
         let (sx, rx) = channel();
-        self.subscribe_timeout.send((timeout_ms, boxed, sx)).unwrap();
+        self.subscribe_timeout.send((now, boxed, sx)).unwrap();
         rx
     }
 }
