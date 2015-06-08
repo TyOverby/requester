@@ -99,7 +99,7 @@ impl <T: Clone + Send + 'static> Requester<T> {
                             }
                         } else {
                             None
-                        }
+                        };
                     }
                     Err(Empty) => { },
                     Err(Disconnected) => return
