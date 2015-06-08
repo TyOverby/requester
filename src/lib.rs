@@ -9,18 +9,22 @@ use std::boxed::Box;
 
 type FilterFn<T> = Box<Fn(&T) -> bool + Send>;
 
+#[derive(Clone)]
 pub struct Requester<T: Send> {
     subscribe_no_timeout: Sender<(FilterFn<T>, Sender<T>)>,
     subscribe_timeout: Sender<(u64, FilterFn<T>, Sender<Option<T>>)>
 }
 
 impl <T: Clone + Send + 'static> Requester<T> {
-    pub fn new(source: Receiver<T>) -> Requester<T> {
+    pub fn new(source: Receiver<T>) -> (Requester<T>, Receiver<T>) {
         let mut without_timeouts: Vec<(FilterFn<T>, Sender<T>)> = Vec::new();
         let mut with_timeouts: Vec<(u64, FilterFn<T>, Sender<Option<T>>)> = Vec::new();
 
         let (nt_s, nt_r) = channel();
         let (t_s, t_r) = channel();
+
+        let (forward_s, forward_r) = channel();
+        let mut forward_s = Some(forward_s);
 
         let mut no_more_subscribers = false;
 
@@ -81,21 +85,32 @@ impl <T: Clone + Send + 'static> Requester<T> {
                                 true
                             }
                         });
+
+                        forward_s = if let Some(forward) = forward_s {
+                            if forward.send(value).is_err() {
+                                None
+                            } else {
+                                Some(forward)
+                            }
+                        } else {
+                            None
+                        }
                     }
                     Err(Empty) => { },
                     Err(Disconnected) => return
                 }
 
-                if no_more_subscribers && without_timeouts.is_empty() && with_timeouts.is_empty() {
+                if no_more_subscribers && without_timeouts.is_empty() && with_timeouts.is_empty() && forward_s.is_none() {
                     return;
                 }
+
             }
         });
 
-        Requester {
+        (Requester {
             subscribe_no_timeout: nt_s,
             subscribe_timeout: t_s
-        }
+        }, forward_r)
     }
 
     pub fn request<F>(&self, predicate: F) -> Receiver<T> where F: Fn(&T) -> bool + Send + 'static{
