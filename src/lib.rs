@@ -16,6 +16,11 @@ pub struct Requester<T: Send> {
 }
 
 impl <T: Clone + Send + 'static> Requester<T> {
+    /// Create a new Requester from a source of items.
+    ///
+    /// This function returns a Requester that can be queried for values,
+    /// as well as a Receiver<T> that will have all the original values moved into
+    /// without any clones.
     pub fn new(source: Receiver<T>) -> (Requester<T>, Receiver<T>) {
         let mut without_timeouts: Vec<(FilterFn<T>, Sender<T>)> = Vec::new();
         let mut with_timeouts: Vec<(u64, FilterFn<T>, Sender<Option<T>>)> = Vec::new();
@@ -112,6 +117,7 @@ impl <T: Clone + Send + 'static> Requester<T> {
         }, forward_r)
     }
 
+    /// Returns a Receiver<T> where for each element, `predicate(t) == true`.
     pub fn request<F>(&self, predicate: F) -> Receiver<T> where F: Fn(&T) -> bool + Send + 'static{
         let boxed = Box::new(predicate) as FilterFn<T>;
         let (sx, rx) = channel();
@@ -119,6 +125,9 @@ impl <T: Clone + Send + 'static> Requester<T> {
         rx
     }
 
+    /// Returns a Receiver<Option<T>> where for each `Some` element, `predicate(t) == true`. A `None` coming out
+    /// of the Receiver means that a timeout was reached and no more elements will be sent on the
+    /// channel.
     pub fn request_timeout<F>(&self, timeout_ms: u64, predicate: F) -> Receiver<Option<T>> where F: Fn(&T) -> bool + Send + 'static {
         let now = precise_time_ms() + timeout_ms;
         let boxed = Box::new(predicate) as FilterFn<T>;
