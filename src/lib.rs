@@ -61,7 +61,7 @@ impl <T: Clone + Send + 'static> Requester<T> {
 
                 // Get rid of timed out receivers
                 let current = precise_time_ms();
-                with_timeouts.retain(|&(timeout, _, _)| timeout >= current);
+                with_timeouts.retain(|&(deadline, _, _)| deadline >= current);
 
                 // Get a value and send it out to all the listeners
                 match source.try_recv() {
@@ -125,10 +125,10 @@ impl <T: Clone + Send + 'static> Requester<T> {
     ///
     /// The sending end of the channel will be closed when the timeout is reached.
     pub fn request_timeout<F>(&self, timeout_ms: u64, predicate: F) -> Receiver<T> where F: Fn(&T) -> bool + Send + 'static {
-        let now = precise_time_ms() + timeout_ms;
+        let deadline = precise_time_ms() + timeout_ms;
         let boxed = Box::new(predicate) as FilterFn<T>;
         let (sx, rx) = channel();
-        self.subscribe_timeout.send((now, boxed, sx)).unwrap();
+        self.subscribe_timeout.send((deadline, boxed, sx)).unwrap();
         rx
     }
 }
