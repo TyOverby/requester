@@ -12,7 +12,7 @@ type FilterFn<T> = Box<Fn(&T) -> bool + Send>;
 #[derive(Clone)]
 pub struct Requester<T: Send> {
     subscribe_no_timeout: Sender<(FilterFn<T>, Sender<T>)>,
-    subscribe_timeout: Sender<(u64, FilterFn<T>, Sender<Option<T>>)>
+    subscribe_timeout: Sender<(u64, FilterFn<T>, Sender<T>)>
 }
 
 impl <T: Clone + Send + 'static> Requester<T> {
@@ -23,7 +23,7 @@ impl <T: Clone + Send + 'static> Requester<T> {
     /// without any clones.
     pub fn new(source: Receiver<T>) -> (Requester<T>, Receiver<T>) {
         let mut without_timeouts: Vec<(FilterFn<T>, Sender<T>)> = Vec::new();
-        let mut with_timeouts: Vec<(u64, FilterFn<T>, Sender<Option<T>>)> = Vec::new();
+        let mut with_timeouts: Vec<(u64, FilterFn<T>, Sender<T>)> = Vec::new();
 
         let (nt_s, nt_r) = channel();
         let (t_s, t_r) = channel();
@@ -61,14 +61,7 @@ impl <T: Clone + Send + 'static> Requester<T> {
 
                 // Get rid of timed out receivers
                 let current = precise_time_ms();
-                with_timeouts.retain(|&(timeout, _, ref sender)| {
-                    if timeout < current {
-                        let _ = sender.send(None);
-                        false
-                    } else {
-                        true
-                    }
-                });
+                with_timeouts.retain(|&(timeout, _, _)| timeout >= current);
 
                 // Get a value and send it out to all the listeners
                 match source.try_recv() {
@@ -84,7 +77,7 @@ impl <T: Clone + Send + 'static> Requester<T> {
 
                         with_timeouts.retain(|&(_, ref filter, ref sender)| {
                             if filter(&value) {
-                                let res = sender.send(Some(value.clone()));
+                                let res = sender.send(value.clone());
                                 res.is_ok()
                             } else {
                                 true
@@ -101,11 +94,14 @@ impl <T: Clone + Send + 'static> Requester<T> {
                             None
                         };
                     }
-                    Err(Empty) => { },
+                    Err(Empty) => thread::yield_now(),
                     Err(Disconnected) => return
                 }
 
-                if no_more_subscribers && without_timeouts.is_empty() && with_timeouts.is_empty() && forward_s.is_none() {
+                if no_more_subscribers &&
+                   without_timeouts.is_empty() &&
+                   with_timeouts.is_empty() &&
+                   forward_s.is_none() {
                     return;
                 }
             }
@@ -125,10 +121,10 @@ impl <T: Clone + Send + 'static> Requester<T> {
         rx
     }
 
-    /// Returns a Receiver<Option<T>> where for each `Some` element, `predicate(t) == true`. A `None` coming out
-    /// of the Receiver means that a timeout was reached and no more elements will be sent on the
-    /// channel.
-    pub fn request_timeout<F>(&self, timeout_ms: u64, predicate: F) -> Receiver<Option<T>> where F: Fn(&T) -> bool + Send + 'static {
+    /// Returns a Receiver<T> where for each element, `predicate(t) == true`.
+    ///
+    /// The sending end of the channel will be closed when the timeout is reached.
+    pub fn request_timeout<F>(&self, timeout_ms: u64, predicate: F) -> Receiver<T> where F: Fn(&T) -> bool + Send + 'static {
         let now = precise_time_ms() + timeout_ms;
         let boxed = Box::new(predicate) as FilterFn<T>;
         let (sx, rx) = channel();
